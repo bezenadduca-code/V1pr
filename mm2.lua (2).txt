@@ -1,0 +1,885 @@
+--[[
+    MM2 God Hub | Advanced Edition – Organized Visuals + Round Timer & Win Detection
+    Main = Live Info | Character = Movement | Combat = Shared Aim/Prediction
+    Sheriff = Gun Mechanics | Murderer = Knife Mechanics | ESP = All Tracking & Alerts
+]]
+
+-- Services
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
+local HttpService = game:GetService("HttpService")
+local Stats = game:GetService("Stats")
+
+-- WindUI (official latest)
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+-- ========================== COLORS ==========================
+local Colors = {
+    Gold    = Color3.fromHex("#FFD700"),
+    Red     = Color3.fromHex("#FF0000"),
+    Green   = Color3.fromHex("#00FF00"),
+    Blue    = Color3.fromHex("#1E90FF"),
+    Purple  = Color3.fromHex("#9D4EDD"),
+    Orange  = Color3.fromHex("#FF7518"),
+    Toxic   = Color3.fromHex("#39FF14"),
+    LightBlue = Color3.fromHex("#7DD3FC"),
+    DarkBg  = Color3.fromHex("#0F172A"),
+    Murder  = Color3.fromHex("#FF0000"),
+    Sheriff = Color3.fromHex("#1E90FF"),
+    Hero    = Color3.fromHex("#FF8C00"),
+    Innocent = Color3.fromHex("#00FF00"),
+}
+
+-- ========================== GRADIENT TEXT ==========================
+local function CreateGradientText(text, color1, color2)
+    local result = ""
+    local length = #text
+    for i = 1, length do
+        local progress = (i - 1) / math.max(length - 1, 1)
+        local r = math.floor((color1.R + (color2.R - color1.R) * progress) * 255)
+        local g = math.floor((color1.G + (color2.G - color1.G) * progress) * 255)
+        local b = math.floor((color1.B + (color2.B - color1.B) * progress) * 255)
+        result = result .. string.format('<font color="rgb(%d, %d, %d)">%s</font>', r, g, b, text:sub(i, i))
+    end
+    return result
+end
+
+-- ========================== POPUP ==========================
+local popupClosed = false
+WindUI:Popup({
+    Title = CreateGradientText("MM2 God Hub", Colors.Red, Colors.Gold),
+    Icon = "skull",
+    Content = CreateGradientText("The Ultimate Murder Mystery 2 Script", Colors.Gold, Colors.LightBlue)
+        .. "<br/>"
+        .. CreateGradientText("Discord: nothing yet", Colors.Blue, Colors.Purple),
+    Buttons = {
+        { Title = "Exit", Callback = function() end, Variant = "Tertiary" },
+        { Title = "Copy Discord", Callback = function()
+            setclipboard("nothing yet")
+            WindUI:Notify({ Title = "Discord Copied!", Content = "Invite copied!", Icon = "check-circle", Duration = 3 })
+            popupClosed = true
+        end, Variant = "Secondary" },
+        { Title = CreateGradientText("Continue", Colors.Toxic, Colors.Orange), Callback = function() popupClosed = true end, Variant = "Primary" }
+    },
+})
+repeat task.wait() until popupClosed
+
+-- ========================== THEME ==========================
+WindUI:AddTheme({
+    Name = "MM2GodTheme",
+    Accent = Colors.Gold,
+    Background = Colors.DarkBg,
+    Outline = Colors.LightBlue,
+    Text = Colors.LightBlue,
+    Toggle = Color3.fromHex("#EF4444"),
+    ToggleBar = Colors.Gold,
+    Checkbox = Color3.fromHex("#EF4444"),
+    CheckboxIcon = Colors.Gold,
+    Slider = Color3.fromHex("#EF4444"),
+    SliderThumb = Colors.Gold,
+    WindowBackground = Color3.fromHex("#1E293B"),
+})
+WindUI:SetTheme("MM2GodTheme")
+
+-- ========================== WINDOW ==========================
+local Window = WindUI:CreateWindow({
+    Title = CreateGradientText("MM2 God Hub", Colors.Gold, Colors.LightBlue),
+    Icon = "skull",
+    Author = "Advanced Edition",
+    Folder = "MM2GodHub",
+
+    Size = UDim2.fromOffset(520, 480),
+    MinSize = Vector2.new(480, 380),
+    MaxSize = Vector2.new(900, 650),
+    Transparent = true,
+    Theme = "MM2GodTheme",
+    Resizable = true,
+    SideBarWidth = 210,
+    HideSearchBar = false,
+    ScrollBarEnabled = true,
+
+    BackgroundImageTransparency = 0.45,
+    Background = "rbxassetid://102034167785966",
+
+    User = {
+        Enabled = true,
+        Anonymous = false,
+        Callback = function() end,
+    }
+})
+
+-- ========================== TAGS ==========================
+local FPSTag = Window:Tag({ Title = "FPS: 0", Color = Color3.fromRGB(100, 150, 255) })
+local PingTag = Window:Tag({ Title = "Ping: 0ms", Color = Color3.fromRGB(100, 200, 255) })
+
+local lastUpdate = tick()
+local frameCount = 0
+RunService.RenderStepped:Connect(function()
+    frameCount = frameCount + 1
+    local now = tick()
+    if now - lastUpdate >= 1 then
+        local fps = math.floor(frameCount / (now - lastUpdate))
+        FPSTag:SetTitle("FPS: " .. fps)
+        FPSTag:SetColor(fps >= 50 and Color3.fromRGB(0, 255, 0) or fps >= 30 and Color3.fromRGB(255, 200, 0) or Color3.fromRGB(255, 0, 0))
+        frameCount = 0
+        lastUpdate = now
+    end
+end)
+
+task.spawn(function()
+    while true do
+        local success, ping = pcall(function() return math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue()) end)
+        if success and ping then
+            PingTag:SetTitle("Ping: " .. ping .. "ms")
+            PingTag:SetColor(ping <= 50 and Color3.fromRGB(0, 255, 0) or ping <= 100 and Color3.fromRGB(255, 200, 0) or Color3.fromRGB(255, 0, 0))
+        end
+        task.wait(2)
+    end
+end)
+
+-- ========================== TABS ==========================
+local MainTab      = Window:Tab({ Title = "Main", Desc = "Live Info", Icon = "home", IconColor = Colors.Gold, ShowTabTitle = false })
+local CharacterTab = Window:Tab({ Title = "Character", Desc = "Speed, Jump, Anti‑Fling", Icon = "user", IconColor = Colors.Green, ShowTabTitle = false })
+local CombatTab    = Window:Tab({ Title = "Combat", Desc = "Shared Silent Aim & Prediction", Icon = "swords", IconColor = Colors.Purple, ShowTabTitle = false })
+local SheriffTab   = Window:Tab({ Title = "Sheriff", Desc = "Auto Shoot & Gun Grabber", Icon = "shield", IconColor = Colors.Sheriff, ShowTabTitle = false })
+local MurdererTab  = Window:Tab({ Title = "Murderer", Desc = "Auto Kill & Options", Icon = "skull", IconColor = Colors.Murder, ShowTabTitle = false })
+local ESPTab       = Window:Tab({ Title = "ESP & Alerts", Desc = "Highlights, Role Checks & Tracker", Icon = "eye", IconColor = Colors.Blue, ShowTabTitle = false })
+local TeleportTab  = Window:Tab({ Title = "Teleport", Desc = "Instant movement", Icon = "move", IconColor = Colors.Orange, ShowTabTitle = false })
+local SettingsTab  = Window:Tab({ Title = "Settings", Desc = "Config & Customization", Icon = "settings", IconColor = Colors.Purple, ShowTabTitle = false })
+
+-- Config Setup
+local ConfigManager = Window.ConfigManager
+local MainConfig = ConfigManager:CreateConfig("MM2GodHub_Advanced")
+
+-- ========================== STATE VARIABLES ==========================
+local Roles = { Murderer = nil, Sheriff = nil, Hero = nil }
+local ESPEnabled = true
+local LineESPEnabled = false
+local ESPFilter = "All"
+local HighlightInstances = {}
+local BillboardInstances = {}
+local LineObjects = {}
+local GunLineObjects = {}
+
+local SilentAIM = true
+local Prediction = 0.045
+local PingFactor = 1
+local WallCheckEnabled = true
+local lastVelocities = {}
+local SpeedEnabled = false
+local SpeedValue = 16
+local InfJumpEnabled = false
+local AntiFling = false
+
+local AutoKill = false
+local KillMode = "Kill Aura"
+local KillRadius = 10
+
+local AutoShoot = false
+local AutoEquipShoot = false
+local AutoShootOnKnifeDraw = false
+local ManualShoot = false
+local GunGrabber = false
+local GrabMode = "Grab only"
+local NotifyGunDrop = false
+local GunESP = false
+
+local XRayEnabled = false
+
+local RoleColors = { Murderer = Colors.Murder, Sheriff = Colors.Sheriff, Hero = Colors.Hero, Innocent = Colors.Innocent }
+local RoleLabels = { Murderer = "Murd", Sheriff = "Sheriff", Hero = "Hero", Innocent = "Inno" }
+
+local GunHighlights = {}
+local ESPFolder, BBFolder
+local AutoKillConn = nil
+local GunGrabberConn = nil
+local LastShootTime = 0
+local ShootDelay = 0.15
+
+-- Round state
+local roundActive = false
+local roundStartTime = nil
+local roundEnded = false
+local endMessage = ""
+
+-- Round event listeners
+local RoundStartRemote = ReplicatedStorage:FindFirstChild("Remotes"):FindFirstChild("Gameplay"):FindFirstChild("RoundStart")
+local RoundEndRemote = ReplicatedStorage:FindFirstChild("Remotes"):FindFirstChild("Gameplay"):FindFirstChild("RoundEndFade")
+
+if RoundStartRemote then
+    RoundStartRemote.OnClientEvent:Connect(function()
+        roundActive = true
+        roundStartTime = tick()
+        roundEnded = false
+        endMessage = ""
+    end)
+end
+
+if RoundEndRemote then
+    RoundEndRemote.OnClientEvent:Connect(function()
+        roundActive = false
+        roundStartTime = nil
+        roundEnded = false
+        endMessage = ""
+        -- Optional: clear roles
+    end)
+end
+
+-- Setup Core Folders
+local function SetupCoreGuiFolders()
+    local core = game:GetService("CoreGui")
+    ESPFolder = Instance.new("Folder", core)
+    ESPFolder.Name = "MM2_ESP"
+    BBFolder = Instance.new("Folder", core)
+    BBFolder.Name = "MM2_Billboards"
+end
+SetupCoreGuiFolders()
+
+-- ========================== WALL CHECK ==========================
+local function IsClearLineOfSight(targetChar)
+    if not WallCheckEnabled then return true end
+    local myChar = LocalPlayer.Character
+    if not myChar or not targetChar then return false end
+    local origin = Camera.CFrame.Position
+    local targetPart = targetChar:FindFirstChild("HumanoidRootPart")
+    if not targetPart then return false end
+
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = { myChar, targetChar }
+
+    local result = Workspace:Raycast(origin, targetPart.Position - origin, raycastParams)
+    return result == nil
+end
+
+-- ========================== X-RAY ==========================
+local function SetXRay(bool)
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and not obj.Parent:FindFirstChild("Humanoid") then
+            if bool then
+                if not obj:FindFirstChild("OriginalTransparency") then
+                    local val = Instance.new("NumberValue", obj)
+                    val.Name = "OriginalTransparency"
+                    val.Value = obj.Transparency
+                end
+                obj.Transparency = 0.5
+            else
+                if obj:FindFirstChild("OriginalTransparency") then
+                    obj.Transparency = obj.OriginalTransparency.Value
+                end
+            end
+        end
+    end
+end
+
+-- ========================== UTILITIES ==========================
+local function IsLocalMurderer() return Roles.Murderer == LocalPlayer end
+local function IsLocalSheriff() return Roles.Sheriff == LocalPlayer or Roles.Hero == LocalPlayer end
+local function HasGunEquipped()
+    return LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun")
+end
+
+local function GetClosestPlayer()
+    local closest, bestDist = nil, math.huge
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local targetRoot = plr.Character:FindFirstChild("HumanoidRootPart")
+            if targetRoot then
+                local dist = (root.Position - targetRoot.Position).Magnitude
+                if dist < bestDist then
+                    bestDist = dist
+                    closest = plr
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- ========================== AIM PREDICTION & TARGETING ==========================
+local function GetAimTarget()
+    if not SilentAIM then return nil end
+
+    local targetPlayer = nil
+    if IsLocalMurderer() then
+        targetPlayer = GetClosestPlayer()
+    elseif IsLocalSheriff() then
+        targetPlayer = Roles.Murderer
+    else
+        return nil
+    end
+
+    if not targetPlayer or not targetPlayer.Character then return nil end
+    local hrp = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+
+    if WallCheckEnabled and not IsClearLineOfSight(targetPlayer.Character) then return nil end
+
+    local rawVelocity = hrp.AssemblyLinearVelocity
+    if not lastVelocities[targetPlayer] then lastVelocities[targetPlayer] = rawVelocity end
+    local smoothedVelocity = lastVelocities[targetPlayer]:Lerp(rawVelocity, 0.3)
+    lastVelocities[targetPlayer] = smoothedVelocity
+
+    local ping = 0
+    pcall(function() ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue()) / 1000 end)
+    local predictionTime = Prediction + (ping * PingFactor)
+
+    return { Part = hrp, Position = hrp.Position + smoothedVelocity * predictionTime }
+end
+
+task.spawn(function()
+    repeat task.wait() until game:IsLoaded()
+    local success, WeaponService = pcall(require, ReplicatedStorage:WaitForChild("ClientServices"):WaitForChild("WeaponService"))
+    if success and WeaponService then
+        local oldGetCFrame = WeaponService.GetMouseTargetCFrame
+        WeaponService.GetMouseTargetCFrame = function(self)
+            local aim = GetAimTarget()
+            if aim then return CFrame.new(aim.Position) end
+            return oldGetCFrame(self)
+        end
+    end
+end)
+
+-- ========================== CHARACTER FUNCTIONS ==========================
+UserInputService.JumpRequest:Connect(function()
+    if InfJumpEnabled and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if SpeedEnabled and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = SpeedValue end
+    end
+end)
+
+RunService.Stepped:Connect(function()
+    if not AntiFling then return end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            for _, part in pairs(plr.Character:GetDescendants()) do
+                if part:IsA("BasePart") then part.CanCollide = false end
+            end
+        end
+    end
+end)
+
+-- ========================== ESP HANDLERS ==========================
+local function ClearESP()
+    for _, h in ipairs(HighlightInstances) do h:Destroy() end
+    for _, b in ipairs(BillboardInstances) do b:Destroy() end
+    for _, line in pairs(LineObjects) do line:Remove() end
+    for _, line in pairs(GunLineObjects) do line:Remove() end
+    table.clear(HighlightInstances)
+    table.clear(BillboardInstances)
+    table.clear(LineObjects)
+    table.clear(GunLineObjects)
+end
+
+local function ShouldESPPlayer(plr, role)
+    if not ESPEnabled or plr == LocalPlayer then return false end
+    if ESPFilter == "All" then return true end
+    if ESPFilter == "Murder" and role == "Murderer" then return true end
+    if ESPFilter == "Sheriff" and role == "Sheriff" then return true end
+    if ESPFilter == "Sheriff/Murder" and (role == "Sheriff" or role == "Murderer") then return true end
+    return false
+end
+
+local function UpdateESP()
+    ClearESP()
+    if not ESPEnabled then return end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        local role = (Roles.Murderer == plr and "Murderer") or (Roles.Sheriff == plr and "Sheriff") or (Roles.Hero == plr and "Hero") or "Innocent"
+        if ShouldESPPlayer(plr, role) and plr.Character then
+            local highlight = Instance.new("Highlight", ESPFolder)
+            highlight.Adornee = plr.Character
+            highlight.FillColor = RoleColors[role]
+            highlight.OutlineColor = RoleColors[role]
+            highlight.FillTransparency = 0.5
+            table.insert(HighlightInstances, highlight)
+
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local bb = Instance.new("BillboardGui", BBFolder)
+                bb.Adornee = hrp
+                bb.Size = UDim2.new(0, 60, 0, 20)
+                bb.StudsOffset = Vector3.new(0, 3, 0)
+                bb.AlwaysOnTop = true
+                local label = Instance.new("TextLabel", bb)
+                label.Size = UDim2.fromScale(1, 1)
+                label.BackgroundTransparency = 1
+                label.Text = RoleLabels[role]
+                label.TextColor3 = RoleColors[role]
+                label.Font = Enum.Font.GothamBold
+                label.TextSize = 12
+                table.insert(BillboardInstances, bb)
+            end
+        end
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    local cam = Camera
+    local screenBottom = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y)
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local role = (Roles.Murderer == plr and "Murderer") or (Roles.Sheriff == plr and "Sheriff") or (Roles.Hero == plr and "Hero") or "Innocent"
+                if LineESPEnabled and ShouldESPPlayer(plr, role) then
+                    local line = LineObjects[plr] or Drawing.new("Line")
+                    line.Thickness = 2
+                    line.Color = RoleColors[role]
+                    line.Transparency = 1
+                    LineObjects[plr] = line
+                    local pos, onScreen = cam:WorldToViewportPoint(hrp.Position)
+                    if onScreen then
+                        line.From = screenBottom
+                        line.To = Vector2.new(pos.X, pos.Y)
+                        line.Visible = true
+                    else
+                        line.Visible = false
+                    end
+                elseif LineObjects[plr] then
+                    LineObjects[plr]:Remove()
+                    LineObjects[plr] = nil
+                end
+            end
+        end
+    end
+
+    if LineESPEnabled and GunESP then
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj.Name == "GunDrop" and obj:IsA("BasePart") then
+                local line = GunLineObjects[obj] or Drawing.new("Line")
+                line.Thickness = 2
+                line.Color = Color3.fromRGB(255, 0, 255)
+                line.Transparency = 1
+                GunLineObjects[obj] = line
+                local pos, onScreen = cam:WorldToViewportPoint(obj.Position)
+                if onScreen then
+                    line.From = screenBottom
+                    line.To = Vector2.new(pos.X, pos.Y)
+                    line.Visible = true
+                else
+                    line.Visible = false
+                end
+            end
+        end
+    else
+        for _, line in pairs(GunLineObjects) do line:Remove() end
+        table.clear(GunLineObjects)
+    end
+end)
+
+-- ========================== GUN HIGHLIGHTS & TRACKING ==========================
+local function HighlightGun(gun)
+    if not GunESP then return end
+    if GunHighlights[gun] then return end
+    local hl = Instance.new("Highlight")
+    hl.Adornee = gun
+    hl.FillColor = Color3.fromRGB(255,0,255)
+    hl.OutlineColor = Color3.fromRGB(255,0,255)
+    hl.FillTransparency = 0.3
+    hl.Parent = gun
+    GunHighlights[gun] = hl
+end
+
+local function UnhighlightGun(gun)
+    if GunHighlights[gun] then GunHighlights[gun]:Destroy(); GunHighlights[gun] = nil end
+end
+
+Workspace.DescendantAdded:Connect(function(obj)
+    if obj.Name == "GunDrop" and obj:IsA("BasePart") then
+        if NotifyGunDrop then
+            WindUI:Notify({ Title = "Gun Drop", Content = "A gun is available on the ground!", Duration = 5 })
+        end
+        HighlightGun(obj)
+        obj.AncestryChanged:Connect(function()
+            if not obj:IsDescendantOf(Workspace) then
+                UnhighlightGun(obj)
+                if GunLineObjects[obj] then GunLineObjects[obj]:Remove(); GunLineObjects[obj] = nil end
+            end
+        end)
+    end
+end)
+
+-- ========================== ROLE RESOLUTION ==========================
+local function UpdateRoles()
+    local remote = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
+    if not remote then return end
+    local success, data = pcall(remote.InvokeServer, remote)
+    if not success or not data then return end
+    local newM, newS, newH = nil, nil, nil
+    for name, info in pairs(data) do
+        local plr = Players:FindFirstChild(name)
+        if plr then
+            if info.Role == "Murderer" then newM = plr
+            elseif info.Role == "Sheriff" then newS = plr
+            elseif info.Role == "Hero" then newH = plr end
+        end
+    end
+    if Roles.Murderer ~= newM or Roles.Sheriff ~= newS or Roles.Hero ~= newH then
+        Roles.Murderer, Roles.Sheriff, Roles.Hero = newM, newS, newH
+        UpdateESP()
+    end
+end
+
+-- ========================== ROUND END DETECTION ==========================
+local function CheckRoundEnd()
+    if not roundActive or roundEnded or not roundStartTime then return end
+
+    local murderer = Roles.Murderer
+    local now = tick()
+    local elapsed = now - roundStartTime
+
+    -- Sheriff win: murderer is dead
+    if murderer and murderer.Character then
+        local hum = murderer.Character:FindFirstChild("Humanoid")
+        if hum and hum.Health <= 0 then
+            roundEnded = true
+            local sheriff = Roles.Sheriff or Roles.Hero
+            local sheriffName = sheriff and sheriff.Name or "Sheriff"
+            endMessage = string.format("Sheriff won – %s shot %s", sheriffName, murderer.Name)
+            return
+        end
+    end
+
+    -- Murderer win: all non-murderers dead
+    local allOthersDead = true
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr ~= murderer and plr.Character then
+            local hum = plr.Character:FindFirstChild("Humanoid")
+            if hum and hum.Health > 0 then
+                allOthersDead = false
+                break
+            end
+        end
+    end
+    if allOthersDead then
+        roundEnded = true
+        endMessage = string.format("Murderer won – %s killed everyone", murderer and murderer.Name or "Murderer")
+        return
+    end
+
+    -- Innocent win: time ran out (3 minutes = 180 seconds)
+    if elapsed >= 180 then
+        roundEnded = true
+        endMessage = string.format("Innocents won – time ran out,\n%s didn't kill fast enough", murderer and murderer.Name or "Murderer")
+    end
+end
+
+-- ========================== INFO PANEL (top‑right) ==========================
+local InfoGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+InfoGui.Name = "MM2_InfoPanel"
+
+local InfoFrame = Instance.new("Frame", InfoGui)
+InfoFrame.Size = UDim2.new(0, 200, 0, 120)
+InfoFrame.Position = UDim2.new(1, -210, 0, 10)  -- top-right (was 1, -170 earlier)
+InfoFrame.BackgroundColor3 = Color3.fromRGB(30,30,40)
+InfoFrame.BackgroundTransparency = 0.2
+InfoFrame.BorderSizePixel = 0
+
+local InfoLabel = Instance.new("TextLabel", InfoFrame)
+InfoLabel.Size = UDim2.new(1, -10, 1, -10)
+InfoLabel.Position = UDim2.new(0, 5, 0, 5)
+InfoLabel.BackgroundTransparency = 1
+InfoLabel.Text = "Loading..."
+InfoLabel.TextColor3 = Color3.new(1,1,1)
+InfoLabel.Font = Enum.Font.Gotham
+InfoLabel.TextSize = 13
+InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+InfoLabel.TextYAlignment = Enum.TextYAlignment.Top
+InfoLabel.RichText = true
+
+local function FormatTime(seconds)
+    local mins = math.floor(seconds / 60)
+    local secs = math.floor(seconds % 60)
+    return string.format("%d:%02d", mins, secs)
+end
+
+function UpdateInfoPanel()
+    local elapsed = 0
+    local timeStr = "Lobby"
+    if roundActive and roundStartTime then
+        elapsed = tick() - roundStartTime
+        if elapsed > 180 then elapsed = 180 end
+        timeStr = FormatTime(elapsed)
+    end
+
+    local myRole = "Innocent"
+    if IsLocalMurderer() then myRole = "Murderer"
+    elseif IsLocalSheriff() then myRole = "Sheriff/Hero" end
+
+    local murderName = Roles.Murderer and Roles.Murderer.Name or "Unknown"
+    local sheriffName = (Roles.Sheriff or Roles.Hero) and (Roles.Sheriff or Roles.Hero).Name or "Unknown"
+
+    local text = string.format(
+        "Round: %s\nYour Role: %s\nMurderer: %s\nSheriff/Hero: %s\n%s",
+        timeStr, myRole, murderName, sheriffName,
+        roundEnded and endMessage or ""
+    )
+    InfoLabel.Text = text
+end
+
+-- ========================== COMBAT RUNNERS ==========================
+local function EquipKnife()
+    local char = LocalPlayer.Character
+    local knife = char and char:FindFirstChild("Knife") or LocalPlayer.Backpack:FindFirstChild("Knife")
+    if knife and knife.Parent == LocalPlayer.Backpack and char then
+        char:FindFirstChildOfClass("Humanoid"):EquipTool(knife)
+        task.wait(0.1)
+    end
+    return char and char:FindFirstChild("Knife")
+end
+
+local function Stab()
+    local knife = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Knife")
+    if knife and knife:FindFirstChild("Stab") then
+        for _ = 1, 3 do knife.Stab:FireServer("Down") end
+    end
+end
+
+local function AutoKillLoop()
+    if not AutoKill or not IsLocalMurderer() then return end
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    if KillMode == "Kill Aura" then
+        local targetFound = false
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local tRoot = plr.Character:FindFirstChild("HumanoidRootPart")
+                if tRoot and (tRoot.Position - root.Position).Magnitude <= KillRadius then
+                    targetFound = true
+                    root.CFrame = tRoot.CFrame + Vector3.new(0,0,-2)
+                    for _, p in pairs(plr.Character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end
+                end
+            end
+        end
+        if targetFound then EquipKnife(); Stab() end
+    elseif KillMode == "Kill Nearby" then
+        local near = false
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                if (plr.Character.HumanoidRootPart.Position - root.Position).Magnitude <= 5 then near = true; break end
+            end
+        end
+        if near then EquipKnife(); Stab() end
+    elseif KillMode == "Kill All" then
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                plr.Character.HumanoidRootPart.Anchored = true
+                plr.Character.HumanoidRootPart.CanCollide = false
+                plr.Character.HumanoidRootPart.CFrame = root.CFrame + root.CFrame.LookVector * 2
+            end
+        end
+        EquipKnife(); Stab() end
+end
+
+local function StartAutoKill() if not AutoKillConn then AutoKillConn = RunService.Heartbeat:Connect(AutoKillLoop) end end
+local function StopAutoKill() if AutoKillConn then AutoKillConn:Disconnect(); AutoKillConn = nil end end
+
+local function AutoShootLoop()
+    if not AutoShoot or tick() - LastShootTime < ShootDelay then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local gun = char:FindFirstChild("Gun")
+    if not gun and AutoEquipShoot then
+        local bpGun = LocalPlayer.Backpack:FindFirstChild("Gun")
+        if bpGun then char:FindFirstChildOfClass("Humanoid"):EquipTool(bpGun); task.wait(0.2) end
+        gun = char:FindFirstChild("Gun")
+    end
+    if not gun then return end
+    local target = Roles.Murderer
+    if not target or not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then return end
+    if WallCheckEnabled and not IsClearLineOfSight(target.Character) then return end
+    if gun:FindFirstChild("Shoot") then
+        gun.Shoot:FireServer(Camera.CFrame, target.Character.HumanoidRootPart.CFrame)
+        LastShootTime = tick()
+    end
+end
+RunService.RenderStepped:Connect(AutoShootLoop)
+
+-- Manual Shoot Configurator
+local ShootButtonGui = nil
+local function SetManualShoot(enable)
+    if not ShootButtonGui then
+        local pg = LocalPlayer:WaitForChild("PlayerGui")
+        local old = pg:FindFirstChild("MM2ShootButton") if old then old:Destroy() end
+        local gui = Instance.new("ScreenGui", pg) gui.Name = "MM2ShootButton" gui.ResetOnSpawn = false
+        local btn = Instance.new("TextButton", gui) btn.Size = UDim2.new(0, 90, 0, 90) btn.Position = UDim2.new(0, 20, 0, 20)
+        btn.BackgroundColor3 = Color3.fromRGB(150,0,0) btn.TextColor3 = Color3.new(1,1,1) btn.Text = "SHOOT\nMURDER"
+        btn.TextSize = 14 btn.Font = Enum.Font.GothamBold Instance.new("UICorner", btn).CornerRadius = UDim.new(1,0)
+        btn.MouseButton1Click:Connect(function()
+            local target = Roles.Murderer local char = LocalPlayer.Character
+            if char and target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+                local g = char:FindFirstChild("Gun") or LocalPlayer.Backpack:FindFirstChild("Gun")
+                if g and g.Parent == LocalPlayer.Backpack then char:FindFirstChildOfClass("Humanoid"):EquipTool(g); task.wait(0.2) end
+                g = char:FindFirstChild("Gun")
+                if g and g:FindFirstChild("Shoot") then g.Shoot:FireServer(Camera.CFrame, target.Character.HumanoidRootPart.CFrame) end
+            end
+        end)
+        ShootButtonGui = gui
+    end
+    ShootButtonGui.Enabled = enable
+end
+
+-- ========================== GUN GRAB ENGINE ==========================
+local function GrabLoop()
+    if not GunGrabber or IsLocalMurderer() then return end
+    if HasGunEquipped() then
+        task.wait(5)
+        return
+    end
+
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local drop = nil
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj.Name == "GunDrop" and obj:IsA("BasePart") then drop = obj; break end
+    end
+    if drop then
+        local oldPos = root.CFrame
+        root.CFrame = drop.CFrame + Vector3.new(0,2,0)
+        task.wait(0.1)
+        local p = drop:FindFirstChildOfClass("ProximityPrompt")
+        if p then fireproximityprompt(p) end
+        task.wait(0.3)
+        root.CFrame = oldPos
+    end
+
+    task.wait(GrabMode == "Grab & shoot murderer" and 0.5 or 2)
+end
+local function StartGunGrabber() if not GunGrabberConn then GunGrabberConn = RunService.Heartbeat:Connect(GrabLoop) end end
+local function StopGunGrabber() if GunGrabberConn then GunGrabberConn:Disconnect(); GunGrabberConn = nil end end
+
+local function TeleportToPart(part)
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if root and part then root.CFrame = part.CFrame end
+end
+
+-- ========================== PERIODIC TASKS ==========================
+task.spawn(function()
+    while task.wait(2) do
+        pcall(UpdateRoles)
+        CheckRoundEnd()
+        UpdateInfoPanel()
+    end
+end)
+
+-- ========================== CHARACTER TAB UI ==========================
+local CharMovementSection = CharacterTab:Section({ Title = "Movement", Icon = "move", Opened = true })
+CharMovementSection:Toggle({ Title = "Speed Boost", Desc = "Increase your walking speed", Icon = "zap", Value = SpeedEnabled, Flag = "SpeedEnabled", Callback = function(v) SpeedEnabled = v end })
+CharMovementSection:Slider({ Title = "Speed Value", Desc = "Maximum walk speed", Value = { Min = 16, Max = 50, Default = 16 }, Step = 1, Flag = "SpeedValue", Callback = function(v) SpeedValue = v end })
+CharMovementSection:Toggle({ Title = "Infinite Jump", Desc = "Jump with no cooldown", Icon = "trending-up", Value = InfJumpEnabled, Flag = "InfJumpEnabled", Callback = function(v) InfJumpEnabled = v end })
+CharMovementSection:Toggle({ Title = "Anti‑Fling", Desc = "Disable collisions on others", Icon = "shield", Value = AntiFling, Flag = "AntiFling", Callback = function(v) AntiFling = v end })
+
+-- ========================== COMBAT TAB UI ==========================
+local AimSection = CombatTab:Section({ Title = "Silent Aim Settings", Icon = "target", Opened = true })
+AimSection:Toggle({ Title = "Silent Aim", Desc = "Automatically aim targets based on role", Icon = "target", Value = SilentAIM, Flag = "SilentAIM", Callback = function(v) SilentAIM = v end })
+AimSection:Slider({ Title = "Prediction", Desc = "Base aim lead calculation time", Value = { Min = 0, Max = 0.2, Default = 0.045 }, Step = 0.005, Flag = "Prediction", Callback = function(v) Prediction = v end })
+AimSection:Slider({ Title = "Ping Factor", Desc = "Network latency compensation weight", Value = { Min = 0, Max = 2, Default = 1 }, Step = 0.1, Flag = "PingFactor", Callback = function(v) PingFactor = v end })
+AimSection:Toggle({ Title = "Wall Check", Desc = "Only lock onto targets clear of geometry", Icon = "eye-off", Value = WallCheckEnabled, Flag = "WallCheckEnabled", Callback = function(v) WallCheckEnabled = v end })
+
+-- ========================== SHERIFF TAB UI ==========================
+local ShootSection = SheriffTab:Section({ Title = "Auto Shoot Operations", Icon = "gun", Opened = true })
+ShootSection:Toggle({ Title = "Auto Shoot", Desc = "Continuously fire at murderer", Value = AutoShoot, Flag = "AutoShoot", Callback = function(v) AutoShoot = v end })
+ShootSection:Toggle({ Title = "Auto Equip Gun", Desc = "Equip weapon from inventory before engagement", Value = AutoEquipShoot, Flag = "AutoEquipShoot", Callback = function(v) AutoEquipShoot = v end })
+ShootSection:Toggle({ Title = "Auto Shoot on Knife Draw", Desc = "Instantly shoot when murderer exposes knife", Value = AutoShootOnKnifeDraw, Flag = "AutoShootOnKnifeDraw", Callback = function(v) AutoShootOnKnifeDraw = v end })
+ShootSection:Toggle({ Title = "Manual Shoot Button", Desc = "Show an overlay fire button", Value = ManualShoot, Flag = "ManualShoot", Callback = function(v) ManualShoot = v; SetManualShoot(v) end })
+
+local GunSection = SheriffTab:Section({ Title = "Item Acquisition", Icon = "package", Opened = true })
+GunSection:Toggle({ Title = "Auto Grab Gun", Desc = "Instantly travel and secure dropped guns", Value = GunGrabber, Flag = "GunGrabber", Callback = function(v) GunGrabber = v; if v then StartGunGrabber() else StopGunGrabber() end end })
+GunSection:Dropdown({ Title = "Grab Mode", Desc = "Sub-routine state following pick-up", Values = { { Title = "Grab only", Desc = "Just pick up the gun", Icon = "hand", Callback = function() GrabMode = "Grab only" end }, { Title = "Grab & shoot murderer", Desc = "Grab then immediately shoot the murderer", Icon = "crosshair", Callback = function() GrabMode = "Grab & shoot murderer" end } }, Value = GrabMode, Flag = "GrabMode" })
+
+-- ========================== MURDERER TAB UI ==========================
+local KillSection = MurdererTab:Section({ Title = "Auto Kill Options", Icon = "knife", Opened = true })
+KillSection:Toggle({ Title = "Auto Kill", Desc = "Initiate custom execution macro", Value = AutoKill, Flag = "AutoKill", Callback = function(v) AutoKill = v; if v then StartAutoKill() else StopAutoKill() end end })
+KillSection:Dropdown({ Title = "Kill Mode", Desc = "Attack pattern configuration", Values = { { Title = "Kill Aura", Desc = "Teleport inside operational perimeter", Icon = "zap", Callback = function() KillMode = "Kill Aura" end }, { Title = "Kill Nearby", Desc = "Stab naturally within standard reach", Icon = "crosshair", Callback = function() KillMode = "Kill Nearby" end }, { Title = "Kill All", Desc = "Group teleport server cluster to self", Icon = "skull", Callback = function() KillMode = "Kill All" end } }, Value = KillMode, Flag = "KillMode" })
+KillSection:Slider({ Title = "Kill Aura Radius", Desc = "Operational distance limit for kill aura", Value = { Min = 1, Max = 50, Default = 10 }, Step = 1, Flag = "KillRadius", Callback = function(v) KillRadius = v end })
+
+-- ========================== ESP & ALERTS TAB UI ==========================
+local ESPPlayerSection = ESPTab:Section({ Title = "Player Tracking", Icon = "users", Opened = true })
+ESPPlayerSection:Toggle({ Title = "Enable ESP", Desc = "Show highlights and labels on characters", Value = ESPEnabled, Flag = "ESPEnabled", Callback = function(v) ESPEnabled = v; UpdateESP() end })
+ESPPlayerSection:Toggle({ Title = "Line ESP (Tracers)", Desc = "Draw line feeds to tracked players", Value = LineESPEnabled, Icon = "minus", Flag = "LineESPEnabled", Callback = function(v) LineESPEnabled = v end })
+ESPPlayerSection:Dropdown({ Title = "ESP Filter", Desc = "Filter display outputs based on server threat", Values = { "All", "Murder", "Sheriff", "Sheriff/Murder" }, Value = ESPFilter, Flag = "ESPFilter", Callback = function(v) ESPFilter = v; UpdateESP() end })
+
+local ESPItemSection = ESPTab:Section({ Title = "Objective & World Tracking", Icon = "package", Opened = true })
+ESPItemSection:Toggle({
+    Title = "Gun ESP (Highlight)",
+    Desc = "Highlight dropped weapons in neon pink color profiles",
+    Value = GunESP,
+    Flag = "GunESP",
+    Callback = function(v)
+        GunESP = v
+        if v then for _, obj in ipairs(Workspace:GetDescendants()) do if obj.Name=="GunDrop" then HighlightGun(obj) end end
+        else for g,_ in pairs(GunHighlights) do UnhighlightGun(g) end for _,l in pairs(GunLineObjects) do l:Remove() end table.clear(GunLineObjects) end
+    end
+})
+ESPItemSection:Toggle({ Title = "Notify Gun Drop", Desc = "Push alert feed when weapon assets land on world space", Icon = "bell", Value = NotifyGunDrop, Flag = "NotifyGunDrop", Callback = function(v) NotifyGunDrop = v end })
+ESPItemSection:Toggle({ Title = "Map X‑Ray", Desc = "Render environmental geometry structural transparency", Icon = "scan-line", Value = XRayEnabled, Flag = "XRayEnabled", Callback = function(v) XRayEnabled = v; SetXRay(v) end })
+
+local ESPAlertsSection = ESPTab:Section({ Title = "Role Inquiries", Icon = "shield-alert", Opened = true })
+ESPAlertsSection:Button({
+    Title = "Notify Current Roles",
+    Desc = "Force log notification of identified team assignments",
+    Icon = "users",
+    Color = Colors.Gold,
+    Callback = function()
+        for r, p in pairs(Roles) do if p then WindUI:Notify({ Title = r, Content = p.Name, Duration = 5 }) end end
+    end
+})
+
+-- ========================== TELEPORT TAB UI ==========================
+local TeleportSelectSection = TeleportTab:Section({ Title = "Target Selection", Icon = "list", Opened = true })
+local TeleportActionSection = TeleportTab:Section({ Title = "Actions", Icon = "arrow-right", Opened = true })
+
+local function RefreshPlayerList()
+    local list = {} for _, p in ipairs(Players:GetPlayers()) do if p ~= LocalPlayer then table.insert(list, p.Name) end end
+    if #list == 0 then table.insert(list, "No players") end return list
+end
+local SelectedPlayer = nil
+local PlayerDropdown = TeleportSelectSection:Dropdown({ Title = "Select Player", Desc = "Pick entity target coordinate", Values = RefreshPlayerList(), Callback = function(val) SelectedPlayer = Players:FindFirstChild(val) end })
+TeleportSelectSection:Button({ Title = "Refresh List", Icon = "refresh-cw", Callback = function() PlayerDropdown:Refresh(RefreshPlayerList()) end })
+
+TeleportActionSection:Group({}):Button({ Title = "Teleport to Player", Icon = "user-check", Color = Colors.Orange, Callback = function() if SelectedPlayer and SelectedPlayer.Character then TeleportToPart(SelectedPlayer.Character:FindFirstChild("HumanoidRootPart")) end end })
+TeleportActionSection:Button({ Title = "Teleport to Murderer", Icon = "skull", Color = Colors.Red, Callback = function() if Roles.Murderer and Roles.Murderer.Character then TeleportToPart(Roles.Murderer.Character:FindFirstChild("HumanoidRootPart")) end end })
+TeleportActionSection:Button({ Title = "Teleport to Sheriff/Hero", Icon = "shield", Color = Colors.Blue, Callback = function() local r = Roles.Sheriff or Roles.Hero if r and r.Character then TeleportToPart(r.Character:FindFirstChild("HumanoidRootPart")) end end })
+
+-- ========================== SETTINGS TAB UI ==========================
+local SettingsConfigSection = SettingsTab:Section({ Title = "Configuration", Icon = "save", Opened = true })
+local ConfigFile = "MM2GodHub_Advanced"
+SettingsConfigSection:Input({ Title = "Config Name", Desc = "Save parameters file naming descriptor", Value = ConfigFile, Placeholder = "e.g., MyConfig", Callback = function(v) ConfigFile = v end })
+SettingsConfigSection:Button({ Title = "Save Config", Icon = "download", Color = Colors.Green, Callback = function() MainConfig:Save() WindUI:Notify({ Title = "Saved", Content = "Config saved to " .. ConfigFile, Duration = 3 }) end })
+SettingsConfigSection:Button({ Title = "Load Config", Icon = "upload", Color = Colors.Blue, Callback = function() MainConfig:Load() WindUI:Notify({ Title = "Loaded", Content = "Config loaded from " .. ConfigFile, Duration = 3 }) end })
+
+-- ========================== REGISTER CONFIG FLAGS ==========================
+local allFlags = {
+    "SpeedEnabled", "SpeedValue", "InfJumpEnabled", "AntiFling",
+    "SilentAIM", "Prediction", "PingFactor", "WallCheckEnabled",
+    "ESPEnabled", "LineESPEnabled", "ESPFilter", "XRayEnabled",
+    "AutoKill", "KillMode", "KillRadius",
+    "AutoShoot", "AutoEquipShoot", "AutoShootOnKnifeDraw", "ManualShoot",
+    "GunGrabber", "GrabMode", "NotifyGunDrop", "GunESP",
+}
+for _, flag in ipairs(allFlags) do MainConfig:Register(flag, flag) end
+if isfile(ConfigFile .. ".json") then MainConfig:Load() end
+
+-- ========================== INIT ==========================
+UpdateESP()
+WindUI:Notify({ Title = "MM2 God Hub", Content = "Round Timer & Win Detection Active", Duration = 4 })
