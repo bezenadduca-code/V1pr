@@ -2771,8 +2771,8 @@ local combatS = {
     abMissChance = 0,
     autoPunchOn = false,
     hdtEnabled = false,
-    hdtSpeed = 12,
-    hdtDelay = 0,
+    hdtFlickSpeed = 22,
+    hdtFlickDuration = 1.0,
     hdtMissChance = 0,
     killerCircles = false,
     facingCheck = true,
@@ -3170,69 +3170,65 @@ combatGetKillerHRP = function(killerModel)
     return killerModel:FindFirstChildWhichIsA("BasePart", true)
 end
 
--- HDT: RenderStepped camera flick toward killer.
--- Keeps CameraType Custom so Roblox still handles zoom/subject,
--- but each frame we lerp the CFrame toward the killer-facing position.
--- Fast initial snap, then smooth settle — looks natural, character follows.
-local _hdtFlickActive    = false
-local _hdtFlickConn      = nil
-local _hdtFlickTargetHRP = nil
-local _hdtFlickStartTime = 0
-local HDT_FLICK_DURATION = 0.35   -- seconds camera is held toward killer
-local HDT_LERP_SPEED     = 22     -- higher = snappier flick (tune this)
+-- HDT CAMERA DRAG
+local combatHDTDragging = false
 
 local function combatHDTBeginDrag(killerModel)
-    if _combatHDTDebounce then return end
-    if not killerModel or not killerModel.Parent then return end
-    local char = lp.Character; if not char then return end
-    local hrp  = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+    pcall(function()
+        if combatHDTDragging then return end
+        if combatRollMiss(combatS.hdtMissChance) then return end
 
-    local targetHRP = combatGetKillerHRP(killerModel)
-    if not targetHRP then return end
-    if combatRollMiss(combatS.hdtMissChance) then return end
+        combatHDTDragging = true
 
-    _combatHDTDebounce   = true
-    _hdtFlickActive      = true
-    _hdtFlickTargetHRP   = targetHRP
-    _hdtFlickStartTime   = tick()
+        local cam  = svc.WS.CurrentCamera
+        local char = lp.Character
 
-    -- disconnect any previous flick
-    if _hdtFlickConn then _hdtFlickConn:Disconnect(); _hdtFlickConn = nil end
-
-    local cam = svc.WS.CurrentCamera
-
-    _hdtFlickConn = svc.Run.RenderStepped:Connect(function(dt)
-        if not _hdtFlickActive then
-            _hdtFlickConn:Disconnect(); _hdtFlickConn = nil
+        if not cam or not char or not killerModel then
+            combatHDTDragging = false
             return
         end
 
-        local elapsed = tick() - _hdtFlickStartTime
-        if elapsed > HDT_FLICK_DURATION then
-            _hdtFlickActive    = false
-            _combatHDTDebounce = false
-            _hdtFlickConn:Disconnect(); _hdtFlickConn = nil
+        local hrp        = char:FindFirstChild("HumanoidRootPart")
+        local killerRoot = killerModel:FindFirstChild("HumanoidRootPart") or killerModel.PrimaryPart
+
+        if not hrp or not killerRoot then
+            combatHDTDragging = false
             return
         end
 
-        -- recheck parts each frame (killer may move)
-        local ch = lp.Character; if not ch then return end
-        local myHRP = ch:FindFirstChild("HumanoidRootPart"); if not myHRP then return end
-        local kHRP  = _hdtFlickTargetHRP
-        if not kHRP or not kHRP.Parent then return end
+        local start    = tick()
+        local duration = combatS.hdtFlickDuration
+        local speed    = combatS.hdtFlickSpeed
 
-        local toKiller = (kHRP.Position - myHRP.Position) * Vector3.new(1, 0, 1)
-        if toKiller.Magnitude < 0.01 then return end
-        local dir = toKiller.Unit
+        local conn
+        conn = svc.Run.RenderStepped:Connect(function(dt)
+            pcall(function()
+                if not cam or not hrp or not killerRoot then
+                    conn:Disconnect()
+                    combatHDTDragging = false
+                    return
+                end
 
-        -- Camera sits behind player facing killer, slight upward tilt (looks natural)
-        local desiredPos    = myHRP.Position + Vector3.new(0, 2.2, 0) - dir * 9
-        local desiredLookAt = myHRP.Position + Vector3.new(0, 1.0, 0)
-        local desiredCF     = CFrame.new(desiredPos, desiredLookAt)
+                local elapsed     = tick() - start
+                local alpha       = math.clamp(elapsed / duration, 0, 1)
+                local smoothAlpha = 1 - ((1 - alpha) ^ 3)
 
-        -- Lerp from current cam CFrame — fast at start, settles smoothly
-        local alpha = math.min(1, dt * HDT_LERP_SPEED)
-        cam.CFrame  = cam.CFrame:Lerp(desiredCF, alpha)
+                local playerPos = hrp.Position
+                local killerPos = killerRoot.Position
+                local offset = killerPos - playerPos
+                local dir    = offset.Magnitude > 0 and offset.Unit or Vector3.new(0, 0, -1)
+
+                local camPos   = playerPos - (dir * 6) + Vector3.new(0, 2.5, 0)
+                local targetCF = CFrame.lookAt(camPos, killerPos + Vector3.new(0, 2, 0))
+
+                cam.CFrame = cam.CFrame:Lerp(targetCF, math.clamp(dt * speed * smoothAlpha, 0, 1))
+
+                if alpha >= 1 then
+                    conn:Disconnect()
+                    combatHDTDragging = false
+                end
+            end)
+        end)
     end)
 end
 
@@ -3245,13 +3241,12 @@ local function combatOnBlockAnim(track)
         if not id or not BLOCK_ANIMS[id] then return end
 
         -- HDT
-        if combatS.hdtEnabled and not _combatHDTDebounce then
+        if combatS.hdtEnabled and not combatHDTDragging then
             local now = tick(); if now - combatHDTLastTime >= HDT_CD then
                 combatHDTLastTime = now
                 local nearest = combatGetNearestKiller()
                 if nearest then
                     task.spawn(function()
-                        if combatS.hdtDelay > 0 then task.wait(combatS.hdtDelay) end
                         combatHDTBeginDrag(nearest)
                     end)
                 end
@@ -3449,13 +3444,13 @@ local sec_017 = tabGuest1337:Section({ Title = "HDT (Hitbox Dragging)", Opened =
 
 sec_017:Toggle({ Title = "Enable HDT", Flag = "combatHDT", Default = combatS.hdtEnabled, Callback=function(on) combatS.hdtEnabled=on end, Type = "Checkbox"})
 
-sec_017:Slider({ Title = "HDT Speed", Flag = "combatHDTSpeed", Value = {Min=1,Max=30,Default=combatS.hdtSpeed}, Step = 0.5, Callback=function(v) combatS.hdtSpeed=v end 
+sec_017:Slider({ Title = "Flick Speed", Flag = "combatHDTFlickSpeed", Value = {Min=1,Max=60,Default=combatS.hdtFlickSpeed}, Step = 1, Callback=function(v) combatS.hdtFlickSpeed=v end
 })
 
-sec_017:Slider({ Title = "HDT Delay (s)", Flag = "combatHDTDelay", Value = {Min=0,Max=0.5,Default=combatS.hdtDelay}, Step = 0.01, Callback=function(v) combatS.hdtDelay=v end 
+sec_017:Slider({ Title = "Flick Duration (s)", Flag = "combatHDTFlickDur", Value = {Min=0.1,Max=3.0,Default=combatS.hdtFlickDuration}, Step = 0.1, Callback=function(v) combatS.hdtFlickDuration=v end
 })
 
-sec_017:Slider({ Title = "HDT Miss Chance %", Flag = "combatHDTMiss", Value = {Min=0,Max=100,Default=combatS.hdtMissChance}, Step = 1, Callback=function(v) combatS.hdtMissChance=v end 
+sec_017:Slider({ Title = "HDT Miss Chance %", Flag = "combatHDTMiss", Value = {Min=0,Max=100,Default=combatS.hdtMissChance}, Step = 1, Callback=function(v) combatS.hdtMissChance=v end
 })
 
 local sec_018 = tabGuest1337:Section({ Title = "Vision", Opened = true })
