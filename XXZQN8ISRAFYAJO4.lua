@@ -80,7 +80,7 @@ local popupDone = false
 ui:Popup({
     Title   = GradientText("Hutao [forsaken] V1.0.9", Color3.fromHex("#E8194B"), Colors.Gold),
     Icon    = "sparkles",
-    Content = GradientText("maintained by mitsuki", Colors.Gold, Colors.LightBlue),
+    Content = GradientText("V1.0.9 R WE BACK CHAT!?", Colors.Gold, Colors.LightBlue),
     Buttons = {
         { Title = "Exit",     Callback = function() end,                Variant = "Tertiary" },
         { Title = GradientText("Continue", Color3.fromHex("#E8194B"), Colors.Gold), Callback = function() popupDone = true end, Variant = "Primary" },
