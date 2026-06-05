@@ -1,0 +1,300 @@
+-- ============================================================ --
+--              WallHop V4 - WindUI Edition
+--              Auto seam detection (Strict Line Only)
+-- ============================================================ --
+
+-- Load WindUI
+local WindUI = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"
+))()
+
+-- Services
+local UserInputService = game:GetService("UserInputService")
+local Players          = game:GetService("Players")
+local Workspace        = game:GetService("Workspace")
+local RunService       = game:GetService("RunService")
+
+-- Player
+local player = Players.LocalPlayer
+
+-- ============================================================ --
+-- State
+-- ============================================================ --
+local wallhopToggle       = false
+local autoToggle          = false
+local flickDuration       = 0.03
+local InfiniteJumpEnabled = true
+local jumpConnection      = nil
+local autoJumpConnection  = nil
+
+-- ============================================================ --
+-- Forward declarations (needed because buttons reference these)
+-- ============================================================ --
+local getWallRaycastResult
+local executeWallJump
+
+-- ============================================================ --
+-- WindUI Window
+-- ============================================================ --
+local Window = WindUI:CreateWindow({
+    Title = "WallHop V4",
+    Icon  = "zap",
+    Theme = "Dark",
+})
+
+local Tab = Window:Tab({ Title = "Main", Icon = "home" })
+
+-- WallHop toggle
+Tab:Toggle({
+    Title    = "WallHop (Spacebar)",
+    Value    = false,
+    Callback = function(state)
+        wallhopToggle = state
+    end,
+})
+
+-- Auto toggle
+Tab:Toggle({
+    Title    = "Auto (No Input Needed)",
+    Value    = false,
+    Callback = function(state)
+        autoToggle = state
+    end,
+})
+
+-- Flick Duration Slider  (correct WindUI syntax)
+Tab:Slider({
+    Title = "Flick Duration",
+    Desc  = "How long the camera flick lasts (seconds)",
+    Step  = 0.01,
+    Value = {
+        Min     = 0.01,
+        Max     = 0.30,
+        Default = 0.03,
+    },
+    Callback = function(val)
+        flickDuration = val
+    end,
+})
+
+-- Manual Jump button
+Tab:Button({
+    Title    = "Jump (Face Wall)",
+    Callback = function()
+        local result = getWallRaycastResult()
+        if result then
+            executeWallJump(result, "Button")
+        end
+    end,
+})
+
+-- Destroy button
+Tab:Button({
+    Title    = "Destroy GUI",
+    Callback = function()
+        if jumpConnection     then jumpConnection:Disconnect()     end
+        if autoJumpConnection then autoJumpConnection:Disconnect() end
+        WindUI:Destroy()
+    end,
+})
+
+-- ============================================================ --
+-- Raycast / Seam Detection
+-- ============================================================ --
+local raycastParams = RaycastParams.new()
+raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+getWallRaycastResult = function()
+    local character = player.Character
+    if not character then return nil end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+
+    raycastParams.FilterDescendantsInstances = {character}
+
+    local detectionDistance = 2.5
+    local closestHit  = nil
+    local minDistance = detectionDistance + 1
+    local hrpCF       = hrp.CFrame
+
+    -- Helper function to check if the hit position is strictly on a horizontal seam/edge
+    local function isHitAtSeam(rayResult)
+        if not rayResult or not rayResult.Instance or not rayResult.Instance:IsA("BasePart") then 
+            return false 
+        end
+        
+        local part = rayResult.Instance
+        -- Convert global hit position to the part's local space
+        local localHitPos = part.CFrame:Inverse() * rayResult.Position
+        local halfHeight = part.Size.Y / 2
+        
+        -- Calculate distance to the top and bottom horizontal borders of the brick
+        local distToTop = math.abs(localHitPos.Y - halfHeight)
+        local distToBottom = math.abs(localHitPos.Y + halfHeight)
+        
+        -- Only accept if the hit is within 0.35 studs of the actual part seam line
+        return (distToTop <= 0.35 or distToBottom <= 0.35)
+    end
+
+    -- 8-directional horizontal rays
+    for i = 0, 7 do
+        local angle     = math.rad(i * 45)
+        local direction = (hrpCF * CFrame.Angles(0, angle, 0)).LookVector
+        local ray = Workspace:Raycast(hrp.Position, direction * detectionDistance, raycastParams)
+        if ray and ray.Instance and ray.Distance < minDistance then
+            if math.abs(ray.Normal.Y) < 0.15 then
+                local hitRelY = hrp.Position.Y - ray.Position.Y
+                if hitRelY >= -0.5 and hitRelY <= 3.0 then
+                    if isHitAtSeam(ray) then
+                        minDistance = ray.Distance
+                        closestHit  = ray
+                    end
+                end
+            end
+        end
+    end
+
+    -- Low blockcast to catch seams rays might miss
+    local blockSize     = Vector3.new(1.5, 0.5, 0.5)
+    local blockOffset   = CFrame.new(0, -1.5, -0.4)
+    local blockOriginCF = hrpCF * blockOffset
+    local blockResult   = Workspace:Blockcast(
+        blockOriginCF, blockSize,
+        hrpCF.LookVector * 1.5,
+        raycastParams
+    )
+    if blockResult and blockResult.Instance and blockResult.Distance < minDistance then
+        if math.abs(blockResult.Normal.Y) < 0.15 then
+            if isHitAtSeam(blockResult) then
+                closestHit = blockResult
+            end
+        end
+    end
+
+    return closestHit
+end
+
+-- ============================================================ --
+-- Jump Animation (R6 + R15)
+-- ============================================================ --
+local function playJumpAnimation(character)
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    if not animator then
+        animator        = Instance.new("Animator")
+        animator.Parent = humanoid
+    end
+    local isR15  = character:FindFirstChild("UpperTorso") ~= nil
+    local animId = isR15 and 507765000 or 125750702
+    local anim   = Instance.new("Animation")
+    anim.AnimationId = "rbxassetid://" .. animId
+    animator:LoadAnimation(anim):Play()
+end
+
+-- ============================================================ --
+-- Camera + Character Flick
+-- ============================================================ --
+local function flickCameraAndCharacter()
+    local camera   = Workspace.CurrentCamera
+    local character = player.Character
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    if not (camera and rootPart) then return end
+
+    local origCam  = camera.CFrame
+    local origChar = rootPart.CFrame
+    local flick    = CFrame.Angles(0, math.rad(45), 0)
+
+    camera.CFrame   = origCam  * flick
+    rootPart.CFrame = origChar * flick
+
+    task.wait(flickDuration)
+
+    camera.CFrame   = origCam
+    rootPart.CFrame = origChar
+end
+
+-- ============================================================ --
+-- Core Wall Jump
+-- ============================================================ --
+executeWallJump = function(wallRayResult, jumpType)
+    if jumpType ~= "Button" and not InfiniteJumpEnabled then return end
+
+    local character = player.Character
+    local humanoid  = character and character:FindFirstChildOfClass("Humanoid")
+    local rootPart  = character and character:FindFirstChild("HumanoidRootPart")
+
+    if not (humanoid and rootPart
+        and humanoid:GetState() ~= Enum.HumanoidStateType.Dead
+        and wallRayResult) then
+        return
+    end
+
+    if jumpType ~= "Button" then
+        InfiniteJumpEnabled = false
+    end
+
+    local wallNormal = wallRayResult.Normal
+    local jumpDir    = Vector3.new(wallNormal.X, 0.5, wallNormal.Z).Unit
+    local curVel     = rootPart.AssemblyLinearVelocity
+
+    rootPart.AssemblyLinearVelocity = Vector3.new(
+        jumpDir.X * 20,
+        math.max(curVel.Y, 16),
+        jumpDir.Z * 20
+    )
+
+    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    playJumpAnimation(character)
+    flickCameraAndCharacter()
+
+    if jumpType ~= "Button" then
+        task.wait(0.1)
+        InfiniteJumpEnabled = true
+    end
+end
+
+-- ============================================================ --
+-- Spacebar Wallhop
+-- ============================================================ --
+jumpConnection = UserInputService.JumpRequest:Connect(function()
+    if not wallhopToggle then return end
+    local result = getWallRaycastResult()
+    if result then
+        executeWallJump(result, "Manual")
+    end
+end)
+
+-- ============================================================ --
+-- Auto Jump Heartbeat (seam detection, no color needed)
+-- Only fires when the player is AIRBORNE and near a seam
+-- ============================================================ --
+autoJumpConnection = RunService.Heartbeat:Connect(function()
+    if not autoToggle    then return end
+    if not wallhopToggle then return end
+
+    local character = player.Character
+    local humanoid  = character and character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    if humanoid:GetState() == Enum.HumanoidStateType.Dead then return end
+
+    -- Only trigger when airborne (falling or jumping), NOT when grounded
+    local state = humanoid:GetState()
+    local isAirborne = (
+        state == Enum.HumanoidStateType.Freefall or
+        state == Enum.HumanoidStateType.Jumping
+    )
+    if not isAirborne then return end
+
+    -- Also require the player to be moving (not just standing next to a wall)
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    local hVel = Vector3.new(rootPart.AssemblyLinearVelocity.X, 0, rootPart.AssemblyLinearVelocity.Z)
+    if hVel.Magnitude < 2 then return end
+
+    local result = getWallRaycastResult()
+    if result then
+        executeWallJump(result, "Auto")
+    end
+end)
+
