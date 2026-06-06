@@ -12,10 +12,10 @@ local LocalPlayer = Players.LocalPlayer
 --  CONFIG
 -- ──────────────────────────────────────────────
 local CONFIG = {
-    BehindOffset           = 4.0,   -- Changed from 5.5 to look like a normal close side-step
+    BehindOffset           = 5.5,
     AlreadyBehindTolerance = 3.5,
-    FireDelay              = 0.48,  -- Changed from 0.37 to mimic real human reaction speed
-    DashSpeed              = 42,    -- Changed from 79 to match natural JJS dash velocities
+    FireDelay              = 0.37,
+    DashSpeed              = 79,
     ArcSegments            = 5,
     SideWidth              = 0.65,
     TrailLifetime          = 0.35,
@@ -25,19 +25,23 @@ local CONFIG = {
     AttackAnimId           = "rbxassetid://100962226150441",
 
     FacingDotThreshold     = -0.6,
-   
-    RetryDelay             = 0.08,  -- Slightly delayed to prevent instant snapping
-    RetryFire              = false, -- Disabled to stop suspicious network spamming
+    RetryDelay             = 0.04,
+    RetryFire              = true,
 
     RetryDistance          = 7,
     MaxTargetVelocity      = 28,
-    PostDashDelay          = 0.1,   -- Gave the animation breathing room to look natural
+    PostDashDelay          = 0.06,
 
-    ESPEnabled             = false, -- TURNED OFF so it doesn't show up in recordings/clips
+    ESPEnabled             = true,
     ESPColor               = Color3.fromRGB(255, 50, 50),
     ESPFillTransparency    = 0.7,
     ESPOutlineTransparency = 0.3,
 }
+
+if _G.retryfire ~= nil then
+    CONFIG.RetryFire = _G.retryfire
+end
+
 
 
 -- ──────────────────────────────────────────────
