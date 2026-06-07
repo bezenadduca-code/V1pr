@@ -25,6 +25,7 @@ local CONFIG = {
     AttackAnimId           = "rbxassetid://100962226150441",
 
     FacingDotThreshold     = -0.6,
+   
     RetryDelay             = 0.04,
     RetryFire              = true,
 
@@ -36,13 +37,14 @@ local CONFIG = {
     ESPColor               = Color3.fromRGB(255, 50, 50),
     ESPFillTransparency    = 0.7,
     ESPOutlineTransparency = 0.3,
+    
+    LoopRadius             = 4.5,
+    SpinSpeedMultiplier    = 1.4
 }
 
 if _G.retryfire ~= nil then
     CONFIG.RetryFire = _G.retryfire
 end
-
-
 
 -- ──────────────────────────────────────────────
 --  REMOTES
@@ -347,92 +349,126 @@ local function playAttackAnimation()
 end
 
 -- ──────────────────────────────────────────────
---  CURVED DASH
+--  MOVE CONTROLLER (ARC DASH → LAND AT BACK)
 -- ──────────────────────────────────────────────
 local function performCurvedDash(targetRoot)
     local hrp = getHRP()
-
-    if not hrp then
-        return
-    end
+    if not hrp or not targetRoot or not targetRoot.Parent then return end
 
     local myPos = hrp.Position
+    local finalBackPos = (targetRoot.CFrame * CFrame.new(0, 0, CONFIG.BehindOffset)).Position
 
-    local destPos = (
-        targetRoot.CFrame * CFrame.new(0, 0, CONFIG.BehindOffset)
-    ).Position
+    local toUs = (myPos - targetRoot.Position).Unit
+    local facingUs = targetRoot.CFrame.LookVector:Dot(toUs) > 0.5
+    local weBehind = targetRoot.CFrame.LookVector:Dot(toUs) < -0.5
 
-    if (myPos - destPos).Magnitude < CONFIG.AlreadyBehindTolerance then
-        playAttackAnimation()
-        return
+    if weBehind and facingUs then
+    elseif weBehind then
+        local frontPos = (targetRoot.CFrame * CFrame.new(0, 0, -CONFIG.BehindOffset)).Position
+        hrp.CFrame = CFrame.lookAt(Vector3.new(frontPos.X, myPos.Y, frontPos.Z), targetRoot.Position)
+        myPos = hrp.Position
+        finalBackPos = (targetRoot.CFrame * CFrame.new(0, 0, CONFIG.BehindOffset)).Position
     end
 
-    local dist = (destPos - myPos).Magnitude
-
-    if dist < 0.5 then
-        return
-    end
-
-    local dir = (destPos - myPos).Unit
-    local side = dir:Cross(Vector3.new(0,1,0)).Unit
-
-    local isLeft = math.random(1,2) == 2
-
-    if isLeft then
-        side = -side
-    end
-
+    local isLeft = math.random(1, 2) == 2
     local dashDirection = isLeft and "Left" or "Right"
 
-    local arcDef = {
-        {0.10, CONFIG.SideWidth * 0.50},
-        {0.30, CONFIG.SideWidth * 0.80},
-        {0.55, CONFIG.SideWidth * 0.70},
-        {0.75, CONFIG.SideWidth * 0.40},
-        {1.00, 0},
-    }
-
-    local waypoints = {}
-
-    for i = 1, math.min(CONFIG.ArcSegments, #arcDef) do
-        table.insert(
-            waypoints,
-            myPos
-            + (dir * dist * arcDef[i][1])
-            + (side * dist * arcDef[i][2])
-        )
-    end
-
-    local totalTime = math.max(dist / CONFIG.DashSpeed, 0.08)
-    local segTime = totalTime / #waypoints
+    local baselineDist = (finalBackPos - myPos).Magnitude
+    local totalDuration = math.max((baselineDist / (CONFIG.DashSpeed * 0.6)) * CONFIG.SpinSpeedMultiplier, 0.3)
 
     createTrail(hrp)
+    local dashTrack = playDashAnimation(dashDirection, totalDuration)
 
-    local dashTrack = playDashAnimation(dashDirection, totalTime)
+    local elapsed = 0
+    local connection
 
-    for i, wp in ipairs(waypoints) do
-        local lookDir = (i < #waypoints)
-            and (waypoints[i + 1] - wp).Unit
-            or (targetRoot.Position - wp).Unit
+    hrp.AssemblyLinearVelocity = Vector3.zero
 
-        TweenService:Create(
-            hrp,
-            TweenInfo.new(segTime, Enum.EasingStyle.Linear),
-            {
-                CFrame = CFrame.new(wp, wp + lookDir)
-            }
-        ):Play()
-
-        task.wait(segTime)
+    local startPos = myPos
+    local perp
+    if isLeft then
+        perp = -targetRoot.CFrame.RightVector
+    else
+        perp = targetRoot.CFrame.RightVector
     end
+    perp = Vector3.new(perp.X, 0, perp.Z).Unit
 
-    hrp.CFrame = CFrame.lookAt(destPos, targetRoot.Position)
+    connection = RunService.Heartbeat:Connect(function(dt)
+        if not targetRoot or not targetRoot.Parent or elapsed >= totalDuration then
+            connection:Disconnect()
+            hrp.CFrame = CFrame.lookAt(
+                (targetRoot.CFrame * CFrame.new(0, 0, CONFIG.BehindOffset)).Position,
+                targetRoot.Position
+            )
+            if dashTrack and dashTrack.IsPlaying then
+                dashTrack:Stop(0.1)
+            end
+            playAttackAnimation()
+            return
+        end
 
-    if dashTrack and dashTrack.IsPlaying then
-        dashTrack:Stop(0.1)
+        elapsed = elapsed + dt
+        local t = math.clamp(elapsed / totalDuration, 0, 1)
+        local st = t * t * (3 - 2 * t)
+
+        local currentTargetPos = targetRoot.Position
+        local backPos = (targetRoot.CFrame * CFrame.new(0, 0, CONFIG.BehindOffset)).Position
+
+        local arcBulge = math.sin(st * math.pi) * CONFIG.LoopRadius
+        local straightPath = startPos:Lerp(backPos, st)
+        local frameTargetPos = straightPath + (perp * arcBulge)
+        frameTargetPos = Vector3.new(frameTargetPos.X, hrp.Position.Y, frameTargetPos.Z)
+
+        hrp.CFrame = CFrame.lookAt(frameTargetPos, currentTargetPos)
+    end)
+
+    task.wait(totalDuration)
+end
+
+-- ──────────────────────────────────────────────
+--  CHAR LOCK
+-- ──────────────────────────────────────────────
+local charLockEnabled = true
+local lockedTarget    = nil
+local lockedRoot      = nil
+local lockConnection  = nil
+
+local function clearLock()
+    lockedTarget = nil
+    lockedRoot   = nil
+    if lockConnection then
+        lockConnection:Disconnect()
+        lockConnection = nil
     end
+end
 
-    playAttackAnimation()
+local function acquireLock(model)
+    clearLock()
+    if not model then return end
+    local root     = model:FindFirstChild("HumanoidRootPart")
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid then return end
+
+    lockedTarget = model
+    lockedRoot   = root
+
+    lockConnection = humanoid.Died:Connect(function()
+        clearLock()
+    end)
+end
+
+local function getLockedRoot()
+    if not charLockEnabled then return nil end
+    if not lockedRoot or not lockedRoot.Parent then
+        clearLock()
+        return nil
+    end
+    local humanoid = lockedTarget and lockedTarget:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then
+        clearLock()
+        return nil
+    end
+    return lockedRoot
 end
 
 -- ──────────────────────────────────────────────
@@ -459,16 +495,24 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     isCooling = true
 
     local result = oldNamecall(self, ...)
-
     local args = { ... }
 
-    local target = findNearestTarget()
-    local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
+    -- CharLock: reuse locked target if still alive, else find + lock a new one
+    local locked = getLockedRoot()
+    local target, targetRoot
+    if locked then
+        targetRoot = locked
+        target     = lockedTarget
+    else
+        target     = findNearestTarget()
+        targetRoot = target and target:FindFirstChild("HumanoidRootPart")
+        if charLockEnabled and target then
+            acquireLock(target)
+        end
+    end
 
     task.delay(CONFIG.FireDelay, function()
-
         if targetRoot and targetRoot.Parent and not isTargetFacingAway(targetRoot) then
-
             if returnSkillRemote then
                 pcall(function()
                     returnSkillRemote:FireServer()
@@ -487,14 +531,10 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
 
                 task.wait(CONFIG.PostDashDelay)
 
-                local shouldRetryFire = (
-                    _G.retryfire ~= nil
-                ) and _G.retryfire or CONFIG.RetryFire
+                local shouldRetryFire = (_G.retryfire ~= nil) and _G.retryfire or CONFIG.RetryFire
 
                 if not canRetry(targetRoot) then
-                    -- Handled internally
                 elseif not shouldRetryFire then
-                    -- Handled internally
                 else
                     isRetrying = true
 
@@ -515,9 +555,7 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                     isCooling = false
                 end)
             end)
-
         else
-
             pcall(function()
                 targetRemote:FireServer(table.unpack(args))
             end)
@@ -532,7 +570,6 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         if not targetRoot or not targetRoot.Parent then
             return
         end
-
         performCurvedDash(targetRoot)
     end)
 
@@ -549,7 +586,7 @@ local Window = WindUI:CreateWindow({
 })
 
 -- ── SETTINGS TAB ────────────────────────────────
-local SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings" })
+local SettingsTab = Window:Tab({ Title = "Itadori", Icon = "settings" })
 
 SettingsTab:Slider({
     Title = "Dash Speed",
@@ -596,6 +633,24 @@ SettingsTab:Toggle({
     Callback = function(value)
         CONFIG.RetryFire = value
         _G.retryfire = value
+    end,
+})
+
+SettingsTab:Toggle({
+    Title    = "Char Lock (Bodyguard)",
+    Value    = charLockEnabled,
+    Callback = function(value)
+        charLockEnabled = value
+        if not value then
+            clearLock()
+        end
+    end,
+})
+
+SettingsTab:Button({
+    Title    = "Reset Lock",
+    Callback = function()
+        clearLock()
     end,
 })
 
@@ -649,4 +704,3 @@ ESPTab:Button({
         updateESP()
     end,
 })
-
